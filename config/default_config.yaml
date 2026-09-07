@@ -1,0 +1,43 @@
+project:
+  name: "credit_scorecard_agent"
+  version: "0.1.0"
+
+data:
+  target: "creditability"
+  id_col: null
+  test_size: 0.3
+  random_state: 42
+
+preprocessing:
+  missing_strategy: "median"
+  outlier_method: "cap"
+  outlier_sigma: 5.0
+
+feature_selection:
+  iv_threshold: 0.02
+  missing_threshold: 0.5
+  identical_threshold: 0.95
+  psi_threshold: 0.1
+
+binning:
+  method: "tree"
+  max_bins: 8
+  min_bin_size: 0.05
+  breaks_list: null
+
+model:
+  max_iter: 1000
+  regularization: 0.01
+  stepwise: false
+
+scorecard:
+  base_score: 600
+  pdo: 20
+  base_odds: 50
+  double_odds: 1
+
+guardrails:
+  min_ks: 0.3
+  min_auc: 0.7
+  max_psi: 0.1
+  require_human_review: true
