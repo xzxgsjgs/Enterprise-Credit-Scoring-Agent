@@ -51,7 +51,11 @@ def load_data(
 
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        df = pd.read_csv(path, encoding=encoding, sep=sep)
+        # pandas 3.0+ 移除了 sep=None 自动推断，改用 engine="python" + sep=None
+        if sep is None:
+            df = pd.read_csv(path, encoding=encoding, sep=None, engine="python")
+        else:
+            df = pd.read_csv(path, encoding=encoding, sep=sep)
     elif suffix in {".xlsx", ".xls"}:
         df = pd.read_excel(path)
     else:

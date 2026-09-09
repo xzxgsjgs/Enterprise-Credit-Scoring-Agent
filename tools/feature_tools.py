@@ -75,6 +75,44 @@ def _patched_cut(*args, **kwargs):
 
 _pd2.cut = _patched_cut
 
+# ---- 兼容垫片: 修复 scorecardpy 内部把 numpy ndarray 赋给 str 列时的 TypeError ----
+# 现象: 'Invalid value '[0 0 1 0 ...]' for dtype 'str''
+# 根因: pandas 3.0 的 StringDtype 在 _setitem_single_column 里 strict check，
+#       dtype=='str' 不在 (np.void, object) 白名单中 → 抛 TypeError
+# 方案: 在 var_filter/woebin 调用前将 StringDtype 列转为 object（_convert_stringdtype_to_object）
+#       注: 尝试用 __setitem__ 钩子在赋值时拦截转换反而与 pandas 3.0 dtype 推断冲突，放弃。
+
+
+def _convert_stringdtype_to_object(df: pd.DataFrame) -> pd.DataFrame:
+    """将 StringDtype 列转为 object，规避 pandas 3.0 的 _setitem_single_column 严格校验。
+
+    scorecardpy 0.1.9.7 内部多处使用 `df.loc[:, col] = ndarray` 给 str 列赋值，
+    pandas 3.0 的 StringDtype 在 _setitem_single_column 严格 dtype 校验，对非
+    (np.void, object) 类型会抛 'Invalid value ... for dtype str'。
+
+    直接 astype(object) 在 pandas 3.0 StringDtype 列上不会生效，必须用
+    `pd.Series(list, dtype=object)` 显式构造才能真正改为 object。
+    """
+    converted = df.copy()
+    for col in converted.columns:
+        if converted[col].dtype.name == "str":
+            converted[col] = pd.Series(converted[col].tolist(), dtype=object)
+    return converted
+
+
+logger = logging.getLogger(__name__)
+
+
+# 同时 patch __setitem__ 的 loc 版本（scorecardpy 偶尔用 .loc[:, col] = value）
+# 注: pandas 不同版本 _LocIndexer 内部 API 不稳定，依赖 DataFrame 的 mainpath，
+#     现代 pandas 的所有 setter 都走 __setitem__ 路径。
+#     经过多次尝试，__setitem__ 钩子无法稳定兼容 pandas 3.0 + scorecardpy 0.1.9.7，
+#     故放弃 setitem 钩子，统一改用 _convert_stringdtype_to_object 预处理。
+try:
+    pass
+except Exception:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,7 +138,9 @@ def var_filter(
         (filtered_df, iv_info_df) — 筛选后数据与变量IV信息表
     """
     logger.info("变量筛选开始: iv>=%.2f, miss<=%.2f", iv_threshold, missing_threshold)
-    iv_info = sc.var_filter(
+    # 兼容 pandas 3.0 StringDtype：转 object 避免 scorecardpy 内部 .loc[:, col] = ndarray 抛 TypeError
+    df = _convert_stringdtype_to_object(df)
+    result = sc.var_filter(
         df,
         y=target,
         iv_limit=iv_threshold,
@@ -108,7 +148,14 @@ def var_filter(
         identical_limit=identical_threshold,
         return_rm_reason=True,
     )
-    filtered = df[iv_info["var"]].copy()
+    # 兼容 scorecardpy 0.1.9.7+：返回 {'dt': df_kept, 'rm': df_removed}，旧版返回 DataFrame
+    if isinstance(result, dict):
+        filtered = result["dt"]
+        iv_info = result["rm"]  # 含 variable / info / iv / missing_rate / identical_rate
+    else:
+        # 旧版兜底：直接返回的是 DataFrame
+        filtered = result
+        iv_info = result
     logger.info("变量筛选完成: 保留 %d 个变量", len(filtered.columns))
     return filtered, iv_info
 
@@ -145,6 +192,8 @@ def woebin(
         >>> bins = woebin(train_df, target="creditability", max_bins=6)
     """
     logger.info("WOE 分箱开始: method=%s, max_bins=%d, parallel=%s", method, max_bins, parallel)
+    # 兼容 pandas 3.0 StringDtype：转 object
+    df = _convert_stringdtype_to_object(df)
     if parallel:
         bins = sc.woebin(
             df,
@@ -195,7 +244,21 @@ def woebin_ply(
         WOE 化后的 DataFrame
     """
     target_vars = var_list or list(bins.keys())
-    woe_df = sc.woebin_ply(df, bins, var_list=target_vars, print_info=False)
+    # 兼容 scorecardpy 0.1.9.7 + pandas 3.0：
+    #   - bins 字典时 scorecardpy 内部 pd.concat(dict) 在新 pandas 上抛 "No objects"
+    #   - 直接传 list 则后续 bins['variable'] 取不到
+    #   正确做法：先手动 concat 成一个 DataFrame（含 variable 列），再传给 scorecardpy
+    if isinstance(bins, dict):
+        normalized = []
+        for name, b in bins.items():
+            if "variable" not in b.columns:
+                normalized.append(b.assign(variable=name))
+            else:
+                normalized.append(b)
+        bins_for_ply = pd.concat(normalized, ignore_index=True)
+    else:
+        bins_for_ply = bins
+    woe_df = sc.woebin_ply(df, bins_for_ply, var_list=target_vars, print_info=False)
     logger.info("WOE 转换完成: %d 列", woe_df.shape[1])
     return woe_df
 
