@@ -248,17 +248,27 @@ def woebin_ply(
     #   - bins 字典时 scorecardpy 内部 pd.concat(dict) 在新 pandas 上抛 "No objects"
     #   - 直接传 list 则后续 bins['variable'] 取不到
     #   正确做法：先手动 concat 成一个 DataFrame（含 variable 列），再传给 scorecardpy
+    # 防御：scorecardpy 在大面板上分箱失败时会把 float/None 混进 bins 字典，必须过滤
     if isinstance(bins, dict):
         normalized = []
         for name, b in bins.items():
+            if not isinstance(b, pd.DataFrame) or b.empty:
+                logger.warning("woebin_ply 跳过非 DataFrame/空 bins 项: %s (%s)", name, type(b).__name__)
+                continue
             if "variable" not in b.columns:
                 normalized.append(b.assign(variable=name))
             else:
                 normalized.append(b)
+        if not normalized:
+            raise RuntimeError("woebin_ply: bins 字典全部无效（可能 scorecardpy.woebin 在该数据集上全部失败）")
         bins_for_ply = pd.concat(normalized, ignore_index=True)
     else:
         bins_for_ply = bins
-    woe_df = sc.woebin_ply(df, bins_for_ply, var_list=target_vars, print_info=False)
+    # 关键修复：replace_blank_na=True 在 scorecardpy 0.1.9.7 + pandas 3.0 上会触发
+    # `str.findall().apply(lambda x: len(x))`，对含 NaN 的 str 列抛 TypeError。
+    # 改为 False 即可。空字符串处理由前序 _convert_stringdtype_to_object 保证。
+    woe_df = sc.woebin_ply(df, bins_for_ply, var_list=target_vars,
+                           replace_blank=False)
     logger.info("WOE 转换完成: %d 列", woe_df.shape[1])
     return woe_df
 

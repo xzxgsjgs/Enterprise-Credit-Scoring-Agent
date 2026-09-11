@@ -1,12 +1,18 @@
 project:
   name: "credit_scorecard_agent"
-  version: "0.1.0"
+  version: "1.0.0"
 
 data:
-  target: "creditability"
-  id_col: null
+  target: "is_default_next_year"
+  id_col: "Symbol"
+  year_col: "year"
   test_size: 0.3
   random_state: 42
+  # 【v2】时间序列验证开关：True 时用 Expanding Window CV（按 year 切窗），
+  # 替代随机 train_test_split，避免面板数据的时间穿越。
+  time_split: true
+  # 至少用前 N 年作为初始训练集，之后逐年扩展
+  min_train_years: 3
 
 preprocessing:
   missing_strategy: "median"

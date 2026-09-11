@@ -4,3 +4,8 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 .DS_Store
+.env
+checkpoints.db
+*.db
+app/__pycache__/
+app/**/__pycache__/
