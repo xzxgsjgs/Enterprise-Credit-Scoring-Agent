@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/Tests-10%2F10%20passing-brightgreen.svg)](tests/)
 [![Status](https://img.shields.io/badge/Status-Demo%20v1.0-orange.svg)]()
 
-> **⚠️ DEMO 用途，非生产级模型**。本项目为德勤 Financial Quant Team 演示项目，演示混合架构（LLM 编排 + 确定性工具）。**不可直接用于真实信贷决策**。
+> **⚠️ DEMO 用途，非生产级模型**。本项目为演示项目，演示混合架构（LLM 编排 + 确定性工具）。**不可直接用于真实信贷决策**。
 
 ## 项目简介
 
