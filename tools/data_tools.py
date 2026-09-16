@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def load_data(
     file_path: str | Path,
     target: str | None = None,
-    encoding: str = "utf-8",
+    encoding: str = "utf-8-sig",
     sep: str | None = None,
 ) -> pd.DataFrame:
     """加载 CSV / Excel 数据文件并执行基础校验。
@@ -32,7 +32,7 @@ def load_data(
     Args:
         file_path: 数据文件路径，支持 .csv / .xlsx / .xls
         target: 目标列名（标签列），若指定则必须存在于数据中
-        encoding: 文件编码，默认 utf-8
+        encoding: 文件编码，默认 utf-8-sig（自动处理 BOM）
         sep: CSV 分隔符，默认自动推断
 
     Returns:

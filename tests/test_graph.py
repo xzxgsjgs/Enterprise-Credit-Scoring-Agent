@@ -76,7 +76,7 @@ def test_end_to_end_default(csv_path, db_path, fresh_thread):
             {
                 "csv_path": csv_path,
                 "target": "creditability",
-                "config_overrides": {},
+                "config_overrides": {"generate_report": False},  # 避免测试污染真实 reports/ 目录
             },
             config=cfg,
         )
@@ -93,6 +93,40 @@ def test_end_to_end_default(csv_path, db_path, fresh_thread):
 
 
 # ---------------------------------------------------------------------------
+# 测试 1b: 【V2 批次 C】护栏通过 → 必经 reporter → 产出报告/cut-off/分档
+# ---------------------------------------------------------------------------
+def test_end_to_end_reaches_reporter(csv_path, db_path, fresh_thread):
+    """放宽护栏阈值 + 关闭人审 → 图应走到 reporter 并落产出 report_md。"""
+    app, conn = compile_with_sqlite(db_path)
+    try:
+        cfg = {"configurable": {"thread_id": fresh_thread}}
+        result = app.invoke(
+            {
+                "csv_path": csv_path,
+                "target": "creditability",
+                "config_overrides": {
+                    "min_ks": 0.1, "min_auc": 0.6, "max_psi": 0.9,
+                    "require_human_review": False,
+                    "generate_report": False,   # 避免测试污染真实 reports/ 目录
+                },
+            },
+            config=cfg,
+        )
+        assert result.get("report_md"), "reporter 未产出 report_md"
+        assert "一、项目概述" in result["report_md"]
+        assert "十三、附录：分箱明细" in result["report_md"]
+        assert "十一、模型复核结论（Critic）" in result["report_md"]
+        cutoff = result.get("cutoff_info")
+        assert cutoff and cutoff.get("cutoff") is not None, "cut-off 择优缺失"
+        assert result.get("score_grades") is not None, "分数分档缺失"
+        assert result.get("feature_importance") is not None, "特征重要性缺失"
+        print(f"\n[reporter] cutoff={cutoff['cutoff']:.1f} "
+              f"通过率={cutoff['approve_rate']:.2%} 报告字数={len(result['report_md'])}")
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # 测试 2: HITL 中断（构造护栏必失败）
 # ---------------------------------------------------------------------------
 def test_hitl_interrupt(csv_path, db_path, fresh_thread):
@@ -104,7 +138,7 @@ def test_hitl_interrupt(csv_path, db_path, fresh_thread):
             {
                 "csv_path": csv_path,
                 "target": "creditability",
-                "config_overrides": {"min_ks": 0.99, "min_auc": 0.99},
+                "config_overrides": {"min_ks": 0.99, "min_auc": 0.99, "generate_report": False},
             },
             config=cfg,
         )
@@ -129,7 +163,7 @@ def test_hitl_resume_approve(csv_path, db_path, fresh_thread):
             {
                 "csv_path": csv_path,
                 "target": "creditability",
-                "config_overrides": {"min_ks": 0.99, "min_auc": 0.99},
+                "config_overrides": {"min_ks": 0.99, "min_auc": 0.99, "generate_report": False},
             },
             config=cfg,
         )
@@ -160,7 +194,7 @@ def test_state_persistence(csv_path, db_path, fresh_thread):
             {
                 "csv_path": csv_path,
                 "target": "creditability",
-                "config_overrides": {"min_ks": 0.99, "min_auc": 0.99},
+                "config_overrides": {"min_ks": 0.99, "min_auc": 0.99, "generate_report": False},
             },
             config=cfg,
         )
@@ -197,7 +231,7 @@ def test_error_capture(tmp_path, db_path, fresh_thread):
             {
                 "csv_path": str(tmp_path / "nonexistent.csv"),
                 "target": "creditability",
-                "config_overrides": {},
+                "config_overrides": {"generate_report": False},  # 避免测试污染真实 reports/ 目录
             },
             config=cfg,
         )

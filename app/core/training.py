@@ -130,6 +130,7 @@ def _run_expanding_window_cv(
     cfg: dict[str, Any],
     min_train_years: int = 3,
     resume_from_csv: str | Path | None = None,
+    progress_callback=None,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     """Expanding Window 交叉验证：train_year<=t-1，test_year==t。
 
@@ -175,6 +176,11 @@ def _run_expanding_window_cv(
         test_df = df[df[year_col] == t]
         if len(test_df) == 0 or len(train_df) == 0:
             continue
+        if progress_callback is not None:
+            progress_callback(
+                stage="cv_fold",
+                detail=f"CV fold year={t} · train={len(train_df)} / test={len(test_df)} · var_filter + woebin",
+            )
 
         # 优先复用首窗 bins（节省 ~3 分钟/fold）；若失败则回退到 per-fold bins
         # （常见原因：测试集出现训练集未见的分类值，woebin_ply 解析失败）
@@ -360,6 +366,7 @@ def run_training_pipeline(
     csv_path: str | Path,
     target: str,
     config: dict[str, Any] | None = None,
+    progress_callback=None,
 ) -> TrainingResult:
     """跑完整训练流程并返回结果。
 
@@ -367,19 +374,30 @@ def run_training_pipeline(
         csv_path: 训练数据路径（CSV / Excel）
         target: 目标列名
         config: 覆盖默认配置的字典，键与 default_config.yaml 对应
+        progress_callback: 可选回调，签名 (stage: str, detail: str) -> None。
+            stage 取值: "load_data", "eda", "cv_start", "cv_fold", "cv_end",
+                        "split", "preprocess", "var_filter", "woebin",
+                        "train_lr", "evaluate", "scorecard", "lgbm_start",
+                        "lgbm_end", "done"。调用方负责更新 UI 进度条与文字。
 
     Returns:
         TrainingResult 包含 eda / metrics / scorecard / scored_test / guardrail / model / bins
     """
     cfg = dict(config or {})
 
+    def _emit(stage: str, detail: str = "") -> None:
+        if progress_callback is not None:
+            progress_callback(stage=stage, detail=detail)
+
     # 1. 加载与探索
+    _emit("load_data", f"读取 {Path(csv_path).name} ...")
     df = load_data(
         csv_path,
         target=target,
         encoding=cfg.get("encoding", "utf-8"),
         sep=cfg.get("sep"),
     )
+    _emit("eda", f"加载完成 · {len(df)} 行 × {df.shape[1]} 列 · 目标 {target}")
     eda = explore_data(df, target)
 
     # 1.5 【v2】可选：Expanding Window 时间序列 CV（仅当 time_split=True 且存在 year_col）
@@ -388,15 +406,21 @@ def run_training_pipeline(
     if cfg.get("time_split", False):
         year_col = cfg.get("year_col", "year")
         if year_col in df.columns:
+            _emit("cv_start", f"时序切分开启 · year_col={year_col}")
             try:
                 cv_per_fold, cv_mean = _run_expanding_window_cv(
                     df, target=target, year_col=year_col, cfg=cfg,
                     min_train_years=cfg.get("min_train_years", 3),
+                    progress_callback=progress_callback,
                 )
             except Exception as e:
                 cv_mean = {"error": f"{type(e).__name__}: {e}"}
+            _emit("cv_end", f"CV 完成 · mean_auc={cv_mean.get('auc', 0):.3f}" if "error" not in cv_mean else f"CV 失败: {cv_mean.get('error', '')}")
+        else:
+            _emit("cv_start", f"跳过 · year 列 '{year_col}' 不在数据中")
 
     # 2. 划分
+    _emit("split", "随机划分训练/测试集 ...")
     train, test = split_dataset(
         df,
         target=target,
@@ -425,8 +449,8 @@ def run_training_pipeline(
     test = test_features.copy()
     test[target] = y_test.values
 
-    # 3.5 删除纯标识列（ID、名称、日期字符串不参与建模）
-    id_cols = {"Symbol", "ShortName", "EndDate"}
+    # 3.5 删除纯标识列与时序索引列（ID、名称、日期、year 不参与建模）
+    id_cols = {"Symbol", "\ufeffSymbol", "ShortName", "EndDate", "year"}
     train = train.drop(columns=[c for c in id_cols if c in train.columns])
     test = test.drop(columns=[c for c in id_cols if c in test.columns])
 
@@ -439,6 +463,7 @@ def run_training_pipeline(
             test[c] = test[c].fillna("Missing").astype(str)
 
     # 4. 变量筛选
+    _emit("var_filter", f"变量筛选 · IV 阈值 {cfg.get('iv_threshold', 0.02)}")
     train_filtered, _ = var_filter(
         train,
         target=target,
@@ -451,6 +476,7 @@ def run_training_pipeline(
     train = train_filtered
 
     # 5. WOE 分箱与转换
+    _emit("woebin", f"WOE 分箱 · 最大分箱数 {cfg.get('max_bins', 8)}")
     bins = woebin(
         train,
         target=target,
@@ -463,6 +489,7 @@ def run_training_pipeline(
     test_woe = _numeric_only(woebin_ply(test, bins), target)
 
     # 6. 训练
+    _emit("train_lr", "逻辑回归训练 ...")
     C = 1.0 / cfg.get("regularization", 0.01)
     model = model_train(
         train_woe,
@@ -472,6 +499,7 @@ def run_training_pipeline(
     )
 
     # 7. 预测与评估
+    _emit("evaluate", "预测与评估 ...")
     train_proba = model_predict(model, train_woe, as_prob=True)
     test_proba = model_predict(model, test_woe, as_prob=True)
     train_metrics = evaluate_performance(train[target].values, train_proba)
@@ -479,6 +507,7 @@ def run_training_pipeline(
     metrics: dict[str, Any] = {"train": train_metrics, "test": test_metrics, **test_metrics}
 
     # 8. 评分卡与打分
+    _emit("scorecard", f"生成评分卡 · 基准分 {cfg.get('base_score', 600)} / PDO {cfg.get('pdo', 20)}")
     xcolumns = list(train_woe.columns)
     card = build_scorecard(
         bins=bins,
@@ -509,14 +538,19 @@ def run_training_pipeline(
     lgbm_metrics: dict[str, Any] = {}
     lgbm_shap_importance = None
     if cfg.get("use_lgbm", False):
+        _emit("lgbm_start", "LGBM 对照模型 + SHAP 训练 ...")
         try:
             (lgbm_model,
              _lgbm_train_proba, _lgbm_test_proba,
              lgbm_train_metrics, lgbm_test_metrics,
              lgbm_shap_importance) = _train_lgbm_branch(train, test, target, cfg)
             lgbm_metrics = {"train": lgbm_train_metrics, "test": lgbm_test_metrics, **lgbm_test_metrics}
+            _emit("lgbm_end", f"LGBM AUC={lgbm_metrics.get('auc', 0):.3f}")
         except Exception as e:
             lgbm_metrics = {"error": f"{type(e).__name__}: {e}"}
+            _emit("lgbm_end", f"LGBM 失败: {e}")
+
+    _emit("done", "训练完成")
 
     return TrainingResult(
         eda=eda,

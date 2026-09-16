@@ -31,18 +31,23 @@
 
 ```
 credit_agent/
-├── tools/                # 阶段一：17 个确定性工具
+├── tools/                # 阶段一：确定性工具（数值计算全部在此）
 │   ├── data_tools.py         # 加载/EDA/划分/缺失值/异常值
 │   ├── feature_tools.py      # var_filter/woebin/woebin_ply/IV
-│   ├── model_tools.py        # LR 训练/预测/评估
+│   ├── model_tools.py        # LR 训练/预测/评估/简化 SHAP
 │   ├── scorecard_tools.py    # 评分卡构建/打分
-│   └── validation_tools.py   # PSI/CSI/Guardrail
-├── agent/                # 阶段二：LangGraph 编排
+│   ├── validation_tools.py   # PSI/CSI/Guardrail/数据质量守门
+│   ├── cutoff_tools.py       # 【V2】cut-off 择优 + 分数分档
+│   ├── report_tools.py       # 【V2】《模型开发报告》13 章 + 拒贷理由书
+│   └── audit_tools.py        # 【V2】VIF / 系数符号 / 样本集中度审计
+├── agent/                # 阶段二：LangGraph 编排（V2：18 节点闭环）
 │   ├── state.py              # AgentState TypedDict
-│   ├── nodes.py              # 14 节点 + safe 装饰器
+│   ├── nodes.py              # 18 节点 + safe 装饰器
 │   ├── graph.py              # StateGraph + SqliteSaver
+│   ├── routing.py            # 【V2】所有条件边路由
+│   ├── nl_config.py          # 【V2】自然语言 → config（带白名单校验）
 │   ├── serde.py              # PickleFallbackSerializer
-│   └── run.py                # CLI start/resume/show
+│   └── run.py                # CLI start/resume/show（支持 --ask）
 ├── app/                  # 阶段三：Streamlit 双页应用
 │   ├── Home.py               # 入口 + 侧边栏 LLM 选择
 │   ├── pages/                # 1_模型训练.py / 2_实时评分.py
@@ -52,9 +57,19 @@ credit_agent/
 ├── scripts/              # 数据准备 + 离线脚本
 │   ├── prepare_csmar_panel.py    # 构建 v2 训练面板
 │   └── run_full_cv.py            # 完整 10 年 Expanding Window CV
-├── tests/                # 单元测试
-│   ├── test_tools.py         # 5 个工具测试
-│   └── test_graph.py         # 5 个图测试
+├── tests/                # 单元测试（185 passed）
+│   ├── test_tools.py         # 工具冒烟
+│   ├── test_graph.py         # 图编排端到端
+│   ├── test_data_gate.py         # 【V2】数据守门 + 短路
+│   ├── test_nl_config.py         # 【V2】自然语言配置
+│   ├── test_agent_loop.py        # 【V2】诊断-重规划闭环
+│   ├── test_cutoff_tools.py      # 【V2】cut-off 与分档
+│   ├── test_report_tools.py      # 【V2】报告渲染 + Critic 章节
+│   ├── test_audit_tools.py       # 【V2】三项审计
+│   └── test_critic_node.py       # 【V2】Critic 节点与 LLM 降级
+├── docs/                 # 【V2】架构说明与术语手册
+│   ├── ARCHITECTURE_V2.md        # 六模块改造全记录
+│   └── AGENT_V2_落地提示词.md     # 可交接的实施提示词
 ├── config/               # 默认配置
 ├── requirements.txt
 ├── run_streamlit.bat     # Windows 一键启动

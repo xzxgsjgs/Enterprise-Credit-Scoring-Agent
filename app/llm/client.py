@@ -99,12 +99,19 @@ def resolve_default_label(presets: list[ModelPreset] | None = None) -> str:
     return presets[0].label
 
 
-def get_model(label: str | None = None, **kwargs: Any):
+def get_model(
+    label: str | None = None,
+    temperature: float | None = None,
+    timeout: int | None = None,
+    **kwargs: Any,
+):
     """初始化并返回 LangChain chat model。
 
     Args:
         label: 模型 label；None 时使用 LLM_DEFAULT 解析结果。
-        **kwargs: 额外传给 init_chat_model 的参数（如 temperature/timeout 会被覆盖）。
+        temperature: 覆盖 LLM_TEMPERATURE（诊断类决策用 0，保证可复现）。
+        timeout: 覆盖 LLM_TIMEOUT（秒）。
+        **kwargs: 额外传给 init_chat_model 的参数。
 
     Returns:
         BaseChatModel 实例。
@@ -135,8 +142,10 @@ def get_model(label: str | None = None, **kwargs: Any):
             f"环境变量 {preset.api_key_env} 未设置（当前模型: {preset.label}）"
         )
 
-    temperature = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-    timeout = int(os.getenv("LLM_TIMEOUT", "30"))
+    temperature = float(
+        temperature if temperature is not None else os.getenv("LLM_TEMPERATURE", "0.2")
+    )
+    timeout = int(timeout if timeout is not None else os.getenv("LLM_TIMEOUT", "30"))
 
     return init_chat_model(
         model=preset.model,

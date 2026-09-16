@@ -72,6 +72,44 @@ def _print_chunk(chunk: dict[str, Any]) -> None:
                 print(f"  ERROR: {e}")
             for w in warns:
                 print(f"  WARN: {w}")
+            # 【V2】数据质量守门结果
+            gate = update.get("data_gate")
+            if gate:
+                status = "PASS" if gate.get("passed") else "BLOCK"
+                print(f"  [data_gate] {status}: {gate.get('suggestion', '')}")
+                for b in gate.get("blocks", []):
+                    print(f"    BLOCK: {b}")
+            # 【V2 模块 3】Critic 复核结论（不阻塞，只展示）
+            cr = update.get("critic_report")
+            if cr:
+                verdict = "PASS" if cr.get("passed") else "有问题"
+                print(
+                    f"  [critic] {verdict}：{cr.get('n_issues')} 项"
+                    f"（high={cr.get('n_high')} mid={cr.get('n_mid')} low={cr.get('n_low')}，"
+                    f"来源 {cr.get('source')}）"
+                )
+                for it in (cr.get("issues") or [])[:5]:
+                    print(f"    [{it.get('severity')}] {it.get('item')} → {it.get('suggestion')}")
+            # 【V2 模块 5】cut-off 择优结果
+            cut = update.get("cutoff_info")
+            if cut and cut.get("cutoff") is not None:
+                print(
+                    f"  [cut-off] method={cut.get('method')} cutoff={cut.get('cutoff'):.1f} "
+                    f"通过率={cut.get('approve_rate'):.2%} 通过后坏率={cut.get('bad_rate_after'):.2%} "
+                    f"捕获率={cut.get('capture_rate'):.2%} lift={cut.get('lift')}"
+                )
+            # 【V2 模块 3】报告落盘
+            rp = update.get("report_path")
+            if rp:
+                print(f"  [report] 已生成: {rp}")
+            # 【V2】诊断与重试
+            diag = update.get("diagnosis")
+            if diag:
+                print(
+                    f"  [diagnose] action={diag.get('action')} goto={diag.get('goto')} "
+                    f"patch={diag.get('param_patch')} source={diag.get('source')}"
+                )
+                print(f"    reason: {diag.get('reason', '')}")
         else:
             print(f"  [{node}] updated")
 
@@ -82,9 +120,28 @@ def run_full(
     config_path: str | None = None,
     thread_id: str | None = None,
     db_path: str = "checkpoints.db",
+    ask: str | None = None,
 ) -> dict[str, Any]:
-    """运行完整图，stream 打印每节点结果，若中断则停在 hitl。"""
+    """运行完整图，stream 打印每节点结果，若中断则停在 hitl。
+
+    Args:
+        ask: 【V2】自然语言需求，如 "用2018年以后数据、最多分6箱"。
+             解析结果覆盖 --config（--ask 优先级更高）。
+    """
     overrides = _load_config_overrides(config_path)
+
+    # 【V2】自然语言配置：优先级高于 --config
+    if ask and ask.strip():
+        from agent.nl_config import parse_nl_config
+
+        patch, warns = parse_nl_config(ask)
+        if patch:
+            overrides.update(patch)
+        print(f"[NL CONFIG] 需求: {ask}")
+        print(f"[NL CONFIG] 解析: {patch}")
+        for w in warns:
+            print(f"[NL CONFIG] {w}")
+
     initial: AgentState = {
         "csv_path": csv_path,
         "target": target,
@@ -115,6 +172,35 @@ def run_full(
         print(f"metrics: {final.get('metrics', {})}")
         print(f"guardrail.passed: {final.get('guardrail').passed if final.get('guardrail') else 'N/A'}")
         print(f"hitl_decision: {final.get('hitl_decision', 'N/A')}")
+        # 【V2】新增摘要
+        gate = final.get("data_gate") or {}
+        if gate:
+            print(f"data_gate.passed: {gate.get('passed')}")
+        print(f"retry_count: {final.get('retry_count', 0)}")
+        hist = final.get("retry_history") or []
+        if hist:
+            print(f"retry_history ({len(hist)} 轮):")
+            for r in hist:
+                print(
+                    f"  #{r.get('round')} {r.get('action')} → {r.get('goto')} "
+                    f"patch={r.get('param_patch')} source={r.get('source')} "
+                    f"ks={r.get('ks')} auc={r.get('auc')} psi={r.get('psi')}"
+                )
+        lgbm = final.get("lgbm_metrics") or {}
+        if lgbm:
+            print(f"lgbm 对照: auc={lgbm.get('auc')} ks={lgbm.get('ks')}")
+        # 【V2 模块 3】Critic 汇总
+        cr = final.get("critic_report") or {}
+        if cr:
+            print(
+                f"critic: passed={cr.get('passed')} issues={cr.get('n_issues')}"
+                f"（high={cr.get('n_high')} mid={cr.get('n_mid')} low={cr.get('n_low')}，"
+                f"来源 {cr.get('source')}）"
+            )
+        if final.get("diagnosis"):
+            print(f"final_diagnosis: {final['diagnosis']}")
+        if final.get("critical_error"):
+            print("critical_error: True（不可恢复节点失败，已短路终止）")
         return {"thread_id": thread_id, "interrupted": False, "final": final}
     finally:
         conn.close()
@@ -181,6 +267,10 @@ def main() -> int:
     p_run.add_argument("--csv", required=True, help="数据文件路径")
     p_run.add_argument("--target", default="creditability", help="目标列名")
     p_run.add_argument("--config", default=None, help="YAML 配置文件路径")
+    p_run.add_argument(
+        "--ask", default=None,
+        help="【V2】自然语言需求，如 '用2018年以后数据、最多分6箱、开启时序验证'（优先级高于 --config）",
+    )
     p_run.add_argument("--thread", default=None, help="自定义 thread_id")
     p_run.add_argument("--db", default="checkpoints.db", help="SQLite 文件路径")
 
@@ -204,7 +294,10 @@ def main() -> int:
     )
 
     if args.cmd == "start":
-        result = run_full(args.csv, args.target, args.config, args.thread, args.db)
+        result = run_full(
+            args.csv, args.target, args.config, args.thread, args.db,
+            ask=getattr(args, "ask", None),
+        )
         return 0 if not result.get("interrupted") else 1
     if args.cmd == "resume":
         result = resume_hitl(args.thread, args.action, args.note, args.db)

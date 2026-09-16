@@ -74,15 +74,21 @@ def scorecard_ply(
     df: pd.DataFrame,
     card: dict[str, pd.DataFrame],
     only_total_score: bool = False,
-    replace_blank_na: bool = True,
+    replace_blank_na: bool = False,
 ) -> pd.DataFrame:
     """对单笔或多笔数据应用评分卡打分。
+
+    注意：默认 `replace_blank_na=False`。scorecardpy 的 `rep_blank_na` 会对含 NaN 的
+    object 列执行 `astype(str).str.findall(...).apply(lambda x: len(x))`，NaN 被当成
+    float 传给 len() → `TypeError: object of type 'float' has no len()`。
+    该问题在大面板（≥2 万行且含带 NaN 的字符串列）上必现，故默认关闭，
+    与 `tools.feature_tools.woebin_ply` 的处理保持一致。
 
     Args:
         df: 待打分原始数据
         card: build_scorecard() 生成的评分卡
         only_total_score: True 仅返回总评分列, False 包含各变量分
-        replace_blank_na: 是否将空白视为 NA
+        replace_blank_na: 是否将空白视为 NA（默认 False，见上方说明）
 
     Returns:
         包含 score 列(及各变量 score_x)的 DataFrame

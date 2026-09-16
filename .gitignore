@@ -9,3 +9,10 @@ checkpoints.db
 *.db
 app/__pycache__/
 app/**/__pycache__/
+credit_agent_cache/
+*.pkl
+output/
+temp/
+tmp/
+# 模型报告为运行产物，不入库（需要归档时手动移出）
+reports/

@@ -53,6 +53,38 @@ def model_train(
     return model
 
 
+def coefficient_importance(
+    model: Any,
+    feature_names: list[str] | pd.Index | None = None,
+) -> pd.DataFrame:
+    """逻辑回归 + WOE 场景下的「简化 SHAP」：用 |coef| 排序特征重要性。
+
+    原理（确定性，无随机性、不依赖 shap 库）：
+        WOE 编码后每个特征的取值在 [-k, k] 量纲可比范围内，
+        对 log-odds 的边际贡献为 `coef * woe`，因此 |coef| 就代表
+        「该变量 WOE 变动 1 单位时违约 log-odds 的变化幅度」，可作为相对权重排序。
+
+    Args:
+        model: 已训练的逻辑回归（需有 `coef_`）
+        feature_names: 特征名；长度不匹配时用 f0..fn 兜底
+
+    Returns:
+        DataFrame: feature / coef / abs_coef / rank（abs_coef 降序，rank 从 1 起）
+    """
+    coef = np.asarray(model.coef_).reshape(-1)
+    names = list(feature_names) if feature_names is not None else []
+    if len(names) != len(coef):
+        names = [f"f{i}" for i in range(len(coef))]
+    out = pd.DataFrame({
+        "feature": names,
+        "coef": coef,
+        "abs_coef": np.abs(coef),
+    })
+    out = out.sort_values("abs_coef", ascending=False).reset_index(drop=True)
+    out["rank"] = out.index + 1
+    return out
+
+
 def model_predict(
     model: LogisticRegression,
     X: pd.DataFrame | np.ndarray,

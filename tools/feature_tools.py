@@ -140,14 +140,35 @@ def var_filter(
     logger.info("变量筛选开始: iv>=%.2f, miss<=%.2f", iv_threshold, missing_threshold)
     # 兼容 pandas 3.0 StringDtype：转 object 避免 scorecardpy 内部 .loc[:, col] = ndarray 抛 TypeError
     df = _convert_stringdtype_to_object(df)
-    result = sc.var_filter(
-        df,
-        y=target,
-        iv_limit=iv_threshold,
-        missing_limit=missing_threshold,
-        identical_limit=identical_threshold,
-        return_rm_reason=True,
-    )
+    try:
+        result = sc.var_filter(
+            df,
+            y=target,
+            iv_limit=iv_threshold,
+            missing_limit=missing_threshold,
+            identical_limit=identical_threshold,
+            return_rm_reason=True,
+        )
+    except TypeError as e:
+        # scorecardpy 0.1.9.7 在有变量被剔除时会走到
+        # `.groupby(...).reset_index(name='rm_reason')`，pandas 3.0 已移除该关键字参数。
+        # 只要有任何变量被剔除就会命中，属于 API 不兼容（与数据无关），
+        # 故这里降级为 return_rm_reason=False，自行推导被剔除清单。
+        logger.warning(
+            "scorecardpy.var_filter 与当前 pandas 不兼容（%s），降级为 return_rm_reason=False", e
+        )
+        filtered = sc.var_filter(
+            df,
+            y=target,
+            iv_limit=iv_threshold,
+            missing_limit=missing_threshold,
+            identical_limit=identical_threshold,
+            return_rm_reason=False,
+        )
+        removed = [c for c in df.columns if c != target and c not in filtered.columns]
+        iv_info = pd.DataFrame({"variable": removed, "info": ["removed"] * len(removed)})
+        logger.info("变量筛选完成(降级): 保留 %d 个变量，剔除 %d 个", len(filtered.columns), len(removed))
+        return filtered, iv_info
     # 兼容 scorecardpy 0.1.9.7+：返回 {'dt': df_kept, 'rm': df_removed}，旧版返回 DataFrame
     if isinstance(result, dict):
         filtered = result["dt"]

@@ -47,3 +47,88 @@ guardrails:
   min_auc: 0.7
   max_psi: 0.1
   require_human_review: true
+
+# ============================================================================
+# 【Agent V2】自主决策闭环配置
+# ============================================================================
+# 诊断-重规划回路：护栏未通过时由 LLM（降级用规则）决定改哪些参数、回跳到哪一步
+agent:
+  max_retry: 3                  # 最多自动重规划次数，超限转人工
+  allow_llm_diagnosis: true     # false 时只用规则兜底（完全确定性）
+  # 允许 LLM/自然语言修改的参数白名单
+  allowed_params:
+    - iv_threshold
+    - missing_threshold
+    - identical_threshold
+    - max_bins
+    - min_bin_size
+    - binning_method
+    - missing_strategy
+    - outlier_method
+    - outlier_sigma
+    - regularization
+    - test_size
+    - use_lgbm
+    - exclude_vars
+    - min_ks
+    - min_auc
+    - max_psi
+  # 允许回跳的目标节点
+  allowed_goto:
+    - preprocess
+    - var_filter
+    - woebin
+    - model_train
+    - build_scorecard
+  # 参数边界：LLM 给出的值会被夹到边界内
+  param_bounds:
+    iv_threshold: [0.0, 0.2]
+    missing_threshold: [0.1, 0.9]
+    identical_threshold: [0.5, 1.0]
+    max_bins: [3, 12]
+    min_bin_size: [0.01, 0.2]
+    outlier_sigma: [2.0, 8.0]
+    regularization: [0.001, 1.0]
+    test_size: [0.1, 0.5]
+    min_ks: [0.05, 0.6]
+    min_auc: [0.5, 0.95]
+    max_psi: [0.05, 0.5]
+  binning_method_choices: [tree, chimerge, quantile, equal]
+  missing_strategy_choices: [mean, median, mode, constant, drop]
+
+# 数据质量前置守门：explore_data 之后、split 之前
+data_gate:
+  min_rows: 1000                # 最小样本量
+  min_default_rate: 0.005       # 违约率下限（过低无法学）
+  max_default_rate: 0.5         # 违约率上限
+  min_years: 3                  # 仅当 time_split=True 时校验
+  max_missing_ratio: 0.6        # 单列缺失率上限
+  max_identical_ratio: 0.98     # 单一值占比上限
+
+# 报告生成
+report:
+  generate_report: true
+  report_dir: "reports"
+  # LLM 只写 overview/performance/risk 三段「定性分析」；
+  # false → 报告全部走确定性兜底（离线可用）
+  allow_llm_report: true
+  # cut-off 择优口径：ks（最大化 KS）/ approve_rate（命中目标通过率）/ bad_rate（命中目标坏率）
+  cutoff_method: ks
+  # 仅 approve_rate / bad_rate 两种口径需要
+  cutoff_target: null
+
+# Critic 复核（模块 3）：三项确定性审计 + LLM 定性复核，不阻塞主流程
+critic:
+  allow_llm_critic: true        # false → 只用规则结论
+  vif_threshold: 10.0           # VIF > 该值判多重共线性（>5 先 warn）
+  concentration_threshold: 0.5  # 单一取值占比上限
+  concentration_cols: null      # null → 自动挑类别列；也可显式给 ["IndustrySector", "Province"]
+  critic_top_features: 10       # 只把前 N 个大问题写进 findings/report
+  critic_max_rows: 20           # 报告第十一章 issues 明细表最多显示行数
+
+# 建模时排除的变量（自愈时可自动追加漂移变量）
+exclude_vars: []
+# 只用 >= min_year 的数据（自然语言 "用 2020 年以后的数据"）
+min_year: null
+# 排除指定行业代码（自然语言 "排除房地产"）
+exclude_industries: []
