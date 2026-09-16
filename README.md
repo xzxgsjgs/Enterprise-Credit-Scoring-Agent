@@ -48,16 +48,23 @@ credit_agent/
 │   ├── nl_config.py          # 【V2】自然语言 → config（带白名单校验）
 │   ├── serde.py              # PickleFallbackSerializer
 │   └── run.py                # CLI start/resume/show（支持 --ask）
-├── app/                  # 阶段三：Streamlit 双页应用
-│   ├── Home.py               # 入口 + 侧边栏 LLM 选择
-│   ├── pages/                # 1_模型训练.py / 2_实时评分.py
-│   ├── core/training.py      # 一键训练 pipeline（含时序 CV / LGBM）
+├── app/                  # 阶段三：Streamlit 双页应用（V2：Agent 工作台）
+│   ├── Home.py               # 入口 + 侧边栏 LLM 选择 + 页面导航
+│   ├── pages/                # 1_模型训练.py（Agent 工作台）/ 2_实时评分.py
+│   ├── core/
+│   │   ├── training.py       # 快速训练 pipeline（含时序 CV / LGBM）
+│   │   ├── agent_runner.py   # 【V2】Agent 闭环运行封装（stream + HITL resume）
+│   │   ├── dataset_store.py  # 训练集历史管理
+│   │   └── paths.py          # 产物路径
 │   ├── llm/                  # 多模型客户端
-│   └── ui/                   # 指标卡 / 护栏面板 / 评分分布
+│   └── ui/
+│       ├── agent_timeline.py # 【V2】18 节点实时执行时间线
+│       ├── agent_panels.py   # 【V2】六模块面板（守门/自愈/Critic/cut-off/报告/人审）
+│       └── ...               # 指标卡 / 护栏面板 / 评分分布
 ├── scripts/              # 数据准备 + 离线脚本
 │   ├── prepare_csmar_panel.py    # 构建 v2 训练面板
 │   └── run_full_cv.py            # 完整 10 年 Expanding Window CV
-├── tests/                # 单元测试（185 passed）
+├── tests/                # 单元测试（223 passed + 3 slow）
 │   ├── test_tools.py         # 工具冒烟
 │   ├── test_graph.py         # 图编排端到端
 │   ├── test_data_gate.py         # 【V2】数据守门 + 短路
@@ -66,7 +73,10 @@ credit_agent/
 │   ├── test_cutoff_tools.py      # 【V2】cut-off 与分档
 │   ├── test_report_tools.py      # 【V2】报告渲染 + Critic 章节
 │   ├── test_audit_tools.py       # 【V2】三项审计
-│   └── test_critic_node.py       # 【V2】Critic 节点与 LLM 降级
+│   ├── test_critic_node.py       # 【V2】Critic 节点与 LLM 降级
+│   ├── test_agent_runner.py      # 【V2】Streamlit 运行封装
+│   ├── test_app_pages.py         # 【V2】Streamlit 页面冒烟（AppTest）
+│   └── test_app_agent_e2e.py     # 【V2】页面内跑通 Agent 闭环（-m slow）
 ├── docs/                 # 【V2】架构说明与术语手册
 │   ├── ARCHITECTURE_V2.md        # 六模块改造全记录
 │   └── AGENT_V2_落地提示词.md     # 可交接的实施提示词

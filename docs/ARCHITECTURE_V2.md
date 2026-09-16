@@ -451,6 +451,80 @@ critic: passed=False issues=11（high=3 mid=2 low=6，来源 rule+llm）
 
 ---
 
+## 九、Streamlit 界面接入（六模块上屏）
+
+> 背景：V2 六模块最初只落在 `agent/` + CLI 链路，`app/`（Streamlit）走的是另一条
+> 确定性 pipeline（`app/core/training.py::run_training_pipeline`），**完全不经过 LangGraph 图**，
+> 因此界面上看不到任何 V2 能力。本节记录把六模块搬上界面的设计。
+
+### 分层：谁负责什么
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 运行封装 | `app/core/agent_runner.py` | 编译图、`app.stream()` 转发节点事件、HITL interrupt/resume、state 摘要、评分卡落盘 |
+| 展示组件 | `app/ui/agent_timeline.py` | 18 节点实时时间线（待执行 ○ / 运行中 ● / ✅ / ⚠️ / ❌ / 🔁 回跳） |
+| 展示组件 | `app/ui/agent_panels.py` | 六个模块各自的面板 + 顶部三卡概览 |
+| 页面 | `app/pages/1_模型训练.py` | 侧边栏 ①~⑩ 分区、自然语言需求输入、执行、结果 7 个页签、人审交互 |
+
+**硬约束**：`agent_runner.py` 只做「跑图 + 转发 + 摘状态」，**不在 UI 层做任何数值计算**；
+所有指标/护栏/cut-off/报告数值仍然由图内节点经 `tools/` 算出。
+
+### 页面结构
+
+```
+🚂 模型训练与复核
+├─ 顶部状态条：当前训练集 · 执行模式 · 最近一次运行结论
+├─ A 自然语言建模需求（模块 4）
+│    中文描述 → parse_nl_config（LLM + 规则兜底 + validate_patch 白名单/边界夹取）
+│    → 预览 patch 表格 + 校验警告 → 合并进 config_overrides
+├─ B 数据概览（行数/列数/目标列/违约率 + 预览表）
+├─ C 执行按钮（Agent 闭环 / 快速训练，按模式切换文案与耗时预估）
+├─ D 执行时间线（18 节点实时刷新，回跳节点标 🔁 并显示 ×N 次执行）
+├─ E 结果页签
+│    📋 概览        守门面板 + 护栏面板 + 运行日志
+│    🔁 自愈履历     retry_history 表 + 诊断详情（模块 1/2）
+│    🧪 Critic 复核  三项审计汇总 + issues 明细表（模块 3）
+│    🎯 cut-off     推荐切点/通过率/坏率/捕获率/Lift + 分档分布 + 逐变量分值明细（模块 5）
+│    📄 开发报告     13 章 Markdown 渲染 + 下载（模块 5）
+│    📈 模型明细     指标卡 / 评分分布 / 变量重要性 / LGBM 对照
+│    📦 导出         评分卡 pkl / JSON / 重要性 CSV
+└─ F 人工复核（中断时出现）：approve / reject + 复核意见 → Command(resume=...) 继续
+```
+
+### 三个终局的界面分支（不能混在一起）
+
+| state 特征 | 界面表现 |
+|---|---|
+| `data_gate.passed == False` | 红色横幅「数据守门未通过，流程已短路终止（未进入建模）」+ 只渲染守门面板与建议，**不渲染 7 个页签**（避免一堆空面板） |
+| `critical_error == True` | 红色横幅「不可恢复节点失败，已短路终止」+ 运行日志 |
+| `snap.next` 非空（停在 hitl_review）| 黄色横幅「流程在人工复核处暂停」+ 人审面板与决策表单 |
+
+### 与旧 pipeline 的关系：双模式共存
+
+| | 🤖 Agent 闭环 | ⚡ 快速训练 |
+|---|---|---|
+| 入口 | `agent_runner.run_agent` → 18 节点图 | `app.core.training.run_training_pipeline` |
+| 数据守门 | ✅ 不通过直接终止 | ❌ |
+| 诊断-重规划自愈 | ✅ ≤ max_retry 轮 | ❌ |
+| Critic 复核 | ✅ | ❌ |
+| cut-off / 13 章报告 | ✅ | ❌ |
+| Expanding Window CV | ❌（`split_node` 用随机划分） | ✅ |
+| LGBM 对照 | 仅作为自愈手段（`use_lgbm`） | ✅ 直接可选 |
+| 适用 | 正式跑一次、要留痕与复核 | 反复调参试跑 |
+
+两张模式共用同一套侧边栏基础参数与同一份产物路径（`LATEST_SCORECARD_PATH`），
+所以「实时评分」页对两种模式产出的评分卡一视同仁。
+
+### 接入时踩到的坑
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| 自然语言解析出的 `max_bins` / `iv_threshold` 被静默丢弃，设置不生效 | `build_agent_config` 对 `agent_opts` 做白名单过滤时，把 NL patch 一起过滤了；而 NL 参数大多是**基础建模参数**（不在 `AGENT_PARAM_KEYS` 里） | 拆成三个参数 `(base, agent_opts, nl_patch)`：NL patch 已过 `validate_patch`，**原样合并不二次过滤** |
+| 守门拦截时仍显示「一次通过，未触发自愈回路」 | `render_retry_panel` 只看 `retry_history` 为空，分不清「没触发」和「根本没走到」 | 增加 `reached_modeling` 参数，未建模时改为中性提示 |
+| 一堆 `use_container_width` 弃用警告刷屏 | Streamlit 1.63 起改用 `width="stretch"` / `width="content"`，旧参数已标记 2025-12-31 后移除 | `app/` 全量迁移（20 处） |
+
+---
+
 ## 八、后续批次
 
 | 批次 | 内容 | 状态 |

@@ -196,7 +196,7 @@ if mode == "单笔表单":
                         key=f"input_{var}",
                         help=help_text,
                     )
-        submitted = st.form_submit_button("开始打分", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("开始打分", type="primary", width="stretch")
 
     if submitted:
         # 校验必填
@@ -271,7 +271,7 @@ else:
         meta_df = pd.DataFrame(meta_rows)
         st.dataframe(
             meta_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "变量名": st.column_config.TextColumn("变量名", width="medium"),
@@ -287,7 +287,7 @@ else:
         batch_df = pd.read_csv(batch_file) if suffix == ".csv" else pd.read_excel(batch_file)
         st.write(f"待打样本: {len(batch_df)} 行 × {batch_df.shape[1]} 列", batch_df.head(20))
 
-        if st.button("批量打分", type="primary", use_container_width=True):
+        if st.button("批量打分", type="primary", width="stretch"):
             try:
                 scored = scorecard_ply(batch_df, scorecard, only_total_score=True)
                 result_df = batch_df.copy()

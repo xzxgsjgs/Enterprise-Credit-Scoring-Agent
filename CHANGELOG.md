@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — Agent V2：从「线性流水线」升级为「自主决策闭环」（批次 A~D 全部完成，18 节点 / 185 tests）
+### Added — Streamlit 界面接入 V2 六模块（模型训练页重构为 Agent 工作台）
+
+- **`app/core/agent_runner.py`（新）**：在 Streamlit 中驱动 18 节点 LangGraph 图
+  - `run_agent()`：`app.stream()` 跑图，逐节点回调事件；支持 `Command(resume=...)` 继续 HITL
+  - `build_agent_config()`：三层配置合并（基础参数 / Agent 白名单 / NL patch）
+  - `summarize_state()`、`save_scorecard()`：状态摘要与评分卡落盘（供实时评分页）
+- **`app/ui/agent_timeline.py`（新）**：18 节点实时执行时间线，
+  状态含 待执行 / 运行中 / 成功 / 告警 / 失败 / 🔁 回跳，回跳节点显示执行次数
+- **`app/ui/agent_panels.py`（新）**：六模块面板 —— 数据守门、自愈履历、
+  Critic 复核、cut-off 与分档、13 章开发报告、人工复核，外加顶部三卡概览
+- **`app/pages/1_模型训练.py` 重构**：
+  - 侧边栏分区 ① 训练集 ② 执行模式 ③ 数据 ④ 特征分箱 ⑤ 评分卡 ⑥ 护栏
+    ⑦ 数据守门阈值 ⑧ Critic 阈值 ⑨ cut-off 与报告 ⑩ 对照模型
+  - 主区：自然语言需求输入 → 数据概览 → 执行 → 实时时间线 → 结果 7 页签 → 人工复核
+  - **双模式共存**：🤖 Agent 闭环（守门/自愈/Critic/报告）与 ⚡ 快速训练（时序 CV/LGBM）
+  - 三个终局分别渲染：守门拦截 / 关键节点失败 / 人审中断（不再混在一起）
+- **`app/Home.py`**：改为导航页，说明两个页面与六模块在界面上的位置
+
+### Changed
+- 训练页与实时评分页的 `use_container_width` 全部迁移为 `width="stretch"/"content"`
+  （Streamlit 1.63 起该参数已弃用，共 20 处）
+
+### Fixed
+- 自然语言解析出的基础建模参数（`max_bins` / `iv_threshold` 等）会被配置白名单静默丢弃 →
+  拆分 `build_agent_config(base, agent_opts, nl_patch)`，NL patch 原样合并（已过 `validate_patch`）
+- 数据守门拦截时仍显示「一次通过，未触发自愈回路」→ 增加 `reached_modeling` 分支
+
+### Tests
+- 新增 `tests/test_agent_runner.py`（29 例）、`tests/test_app_pages.py`（9 例，AppTest 页面冒烟）、
+  `tests/test_app_agent_e2e.py`（3 例页面内真跑闭环，`-m slow` 才执行）
+- 全量 **223 passed**（+3 slow 默认跳过）
+
+### Added — Agent V2：从「线性流水线」升级为「自主决策闭环」（批次 A~D，18 节点 / 185 tests）
 
 - **批次 A**：数据质量前置守门（`data_gate_node` + `check_data_quality`）、
   不可恢复节点短路到 END（`critical_error` + `route_after_critical`）、
